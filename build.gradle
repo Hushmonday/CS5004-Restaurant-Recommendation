@@ -1,0 +1,43 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+group = 'com.restaurant'
+version = '1.0-SNAPSHOT'
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // Azure OpenAI SDK
+    implementation 'com.azure:azure-ai-openai:1.0.0-beta.12'
+    implementation 'com.azure:azure-identity:1.13.3'
+    
+    // Test dependencies
+    testImplementation "org.junit.jupiter:junit-jupiter:5.10.0"
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_11
+    targetCompatibility = JavaVersion.VERSION_11
+}
+
+application {
+    mainClass = 'com.restaurant.recommendation.core.RestaurantRecommendationServer'
+}
+
+test {
+    useJUnitPlatform()
+}
+
+task runAzureTest(type: JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.restaurant.recommendation.test.AzureTest'
+}
+
+task runSwingUI(type: JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.restaurant.recommendation.view.RestaurantChatUI'
+}
