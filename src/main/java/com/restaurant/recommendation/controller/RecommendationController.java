@@ -26,48 +26,150 @@ public class RecommendationController {
             InputStream requestBody = exchange.getRequestBody();
             Scanner scanner = new Scanner(requestBody).useDelimiter("\\A");
             String requestBodyString = scanner.hasNext() ? scanner.next() : "";
-            
+
+            // Debug: Print received JSON
+            System.out.println("=== Received Request Body ===");
+            System.out.println(requestBodyString);
+            System.out.println("============================");
+
             // Parse JSON request manually
             RecommendationRequest request = parseRecommendationRequest(requestBodyString);
-            
+
+            // Debug: Print parsed request
+            System.out.println("=== Parsed Request ===");
+            System.out.println("UserPreference: " + request.getUserPreference());
+            System.out.println("Location: " + request.getLocation());
+            System.out.println("Cuisine: " + request.getCuisine());
+            System.out.println("PriceRange: " + request.getPriceRange());
+            System.out.println("=====================");
+
             // Process request
             RecommendationResponse response = restaurantService.getRecommendations(request);
-            
+
             // Send response
             RestaurantRecommendationServer.sendJsonResponse(exchange, 200, response);
         } catch (Exception e) {
+            System.err.println("Error in handleGetRecommendations: " + e.getMessage());
+            e.printStackTrace();
             RestaurantRecommendationServer.sendResponse(exchange, 500, "Error processing request: " + e.getMessage());
         }
     }
 
     private RecommendationRequest parseRecommendationRequest(String jsonString) {
         RecommendationRequest request = new RecommendationRequest();
-        
-        // Simple JSON parsing - extract values between quotes
-        String[] lines = jsonString.split(",");
-        for (String line : lines) {
-            line = line.trim();
-            if (line.contains("\"userPreference\"")) {
-                request.setUserPreference(extractValue(line));
-            } else if (line.contains("\"location\"")) {
-                request.setLocation(extractValue(line));
-            } else if (line.contains("\"cuisine\"")) {
-                request.setCuisine(extractValue(line));
-            } else if (line.contains("\"priceRange\"")) {
-                request.setPriceRange(extractValue(line));
-            } else if (line.contains("\"numberOfPeople\"")) {
-                String value = extractValue(line);
-                if (!value.isEmpty()) {
-                    request.setNumberOfPeople(Integer.parseInt(value));
-                }
-            } else if (line.contains("\"occasion\"")) {
-                request.setOccasion(extractValue(line));
-            }
+
+        // Handle empty or null JSON
+        if (jsonString == null || jsonString.trim().isEmpty()) {
+            System.err.println("Warning: Empty JSON received");
+            return request;
         }
-        
+
+        try {
+            // Remove curly braces and whitespace
+            jsonString = jsonString.trim();
+            if (jsonString.startsWith("{")) {
+                jsonString = jsonString.substring(1);
+            }
+            if (jsonString.endsWith("}")) {
+                jsonString = jsonString.substring(0, jsonString.length() - 1);
+            }
+
+            // Split by comma, but be careful about commas inside quoted strings
+            String[] pairs = splitJsonPairs(jsonString);
+
+            for (String pair : pairs) {
+                pair = pair.trim();
+                if (pair.isEmpty()) continue;
+
+                // Find the key and value
+                int colonIndex = pair.indexOf(":");
+                if (colonIndex == -1) continue;
+
+                String key = pair.substring(0, colonIndex).trim();
+                String value = pair.substring(colonIndex + 1).trim();
+
+                // Remove quotes from key
+                key = removeQuotes(key);
+
+                // Set the appropriate field based on key
+                switch (key) {
+                    case "userPreference":
+                        request.setUserPreference(removeQuotes(value));
+                        break;
+                    case "location":
+                        request.setLocation(removeQuotes(value));
+                        break;
+                    case "cuisine":
+                        request.setCuisine(removeQuotes(value));
+                        break;
+                    case "priceRange":
+                        request.setPriceRange(removeQuotes(value));
+                        break;
+                    case "numberOfPeople":
+                        try {
+                            request.setNumberOfPeople(Integer.parseInt(value));
+                        } catch (NumberFormatException e) {
+                            System.err.println("Error parsing numberOfPeople: " + value);
+                        }
+                        break;
+                    case "occasion":
+                        request.setOccasion(removeQuotes(value));
+                        break;
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("Error parsing JSON: " + e.getMessage());
+            e.printStackTrace();
+        }
+
         return request;
     }
-    
+
+    private String[] splitJsonPairs(String jsonString) {
+        // Simple split that handles quoted strings containing commas
+        java.util.List<String> pairs = new java.util.ArrayList<>();
+        StringBuilder currentPair = new StringBuilder();
+        boolean inQuotes = false;
+        char quoteChar = '"';
+
+        for (int i = 0; i < jsonString.length(); i++) {
+            char c = jsonString.charAt(i);
+
+            if ((c == '"' || c == '\'') && (i == 0 || jsonString.charAt(i-1) != '\\')) {
+                if (!inQuotes) {
+                    inQuotes = true;
+                    quoteChar = c;
+                } else if (c == quoteChar) {
+                    inQuotes = false;
+                }
+            }
+
+            if (c == ',' && !inQuotes) {
+                pairs.add(currentPair.toString());
+                currentPair = new StringBuilder();
+            } else {
+                currentPair.append(c);
+            }
+        }
+
+        if (currentPair.length() > 0) {
+            pairs.add(currentPair.toString());
+        }
+
+        return pairs.toArray(new String[0]);
+    }
+
+    private String removeQuotes(String str) {
+        if (str == null) return "";
+
+        str = str.trim();
+        if ((str.startsWith("\"") && str.endsWith("\"")) ||
+                (str.startsWith("'") && str.endsWith("'"))) {
+            return str.substring(1, str.length() - 1);
+        }
+        return str;
+    }
+
     private String extractValue(String line) {
         int start = line.indexOf("\"", line.indexOf("\"") + 1) + 1;
         int end = line.indexOf("\"", start);
@@ -81,7 +183,7 @@ public class RecommendationController {
         String response = "Restaurant Recommendation Service is running!";
         RestaurantRecommendationServer.sendResponse(exchange, 200, response);
     }
-    
+
     public void handleTestOpenAI(HttpExchange exchange) throws IOException {
         try {
             // Create a simple test request
@@ -92,7 +194,7 @@ public class RecommendationController {
             testRequest.setPriceRange("Medium");
             testRequest.setNumberOfPeople(2);
             testRequest.setOccasion("Friends gathering");
-            
+
             String result = openAIService.getRecommendation(testRequest);
             String response = "OpenAI API test successful!\n\nRecommendation result:\n" + result;
             RestaurantRecommendationServer.sendResponse(exchange, 200, response);

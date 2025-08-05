@@ -17,23 +17,33 @@ public class RestaurantChatUI extends JFrame {
 
     public RestaurantChatUI() {
         setTitle("AI Restaurant Chat");
-        setSize(500, 400);
+        setSize(600, 500);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLocationRelativeTo(null);
         setLayout(new BorderLayout());
 
+        // Chat area with better formatting
         chatArea = new JTextArea();
         chatArea.setEditable(false);
         chatArea.setLineWrap(true);
+        chatArea.setWrapStyleWord(true);
+        chatArea.setFont(new Font("Arial", Font.PLAIN, 14));
         JScrollPane scrollPane = new JScrollPane(chatArea);
         add(scrollPane, BorderLayout.CENTER);
 
+        // Input panel
         JPanel inputPanel = new JPanel(new BorderLayout());
         inputField = new JTextField();
+        inputField.setFont(new Font("Arial", Font.PLAIN, 14));
         sendButton = new JButton("Send");
         inputPanel.add(inputField, BorderLayout.CENTER);
         inputPanel.add(sendButton, BorderLayout.EAST);
         add(inputPanel, BorderLayout.SOUTH);
+
+        // Add welcome message
+        chatArea.append("Welcome to AI Restaurant Recommendations!\n");
+        chatArea.append("Try asking: 'I want spicy food at San Jose' or 'Something special in Boston'\n");
+        chatArea.append("----------------------------------------\n\n");
 
         sendButton.addActionListener(new ActionListener() {
             @Override
@@ -52,44 +62,112 @@ public class RestaurantChatUI extends JFrame {
     private void sendMessage() {
         String userInput = inputField.getText().trim();
         if (userInput.isEmpty()) return;
+
         chatArea.append("You: " + userInput + "\n");
         inputField.setText("");
+
+        // Disable input while processing
+        inputField.setEnabled(false);
+        sendButton.setEnabled(false);
+
         new Thread(() -> {
             try {
+                chatArea.append("AI: Thinking...\n");
                 String aiResponse = callAI(userInput);
-                chatArea.append("AI: " + aiResponse + "\n");
+
+                // Remove the "Thinking..." message
+                String text = chatArea.getText();
+                text = text.substring(0, text.lastIndexOf("AI: Thinking..."));
+                chatArea.setText(text);
+
+                // Add the actual response
+                chatArea.append("AI: " + aiResponse + "\n\n");
+
+                // Auto-scroll to bottom
+                chatArea.setCaretPosition(chatArea.getDocument().getLength());
             } catch (Exception ex) {
-                chatArea.append("[Error communicating with AI]\n");
+                chatArea.append("AI: [Error communicating with server: " + ex.getMessage() + "]\n\n");
+            } finally {
+                // Re-enable input
+                SwingUtilities.invokeLater(() -> {
+                    inputField.setEnabled(true);
+                    sendButton.setEnabled(true);
+                    inputField.requestFocus();
+                });
             }
         }).start();
     }
 
     private String callAI(String userInput) throws Exception {
-        // 构造请求体
+        // Extract location from user input if present
+        String location = "";
+        String preference = userInput;
+
+        // Check for location indicators
+        String lowerInput = userInput.toLowerCase();
+        if (lowerInput.contains(" at ") || lowerInput.contains(" in ")) {
+            int atIndex = lowerInput.indexOf(" at ");
+            int inIndex = lowerInput.indexOf(" in ");
+            int index = -1;
+            String delimiter = "";
+
+            if (atIndex > -1 && (inIndex == -1 || atIndex < inIndex)) {
+                index = atIndex;
+                delimiter = " at ";
+            } else if (inIndex > -1) {
+                index = inIndex;
+                delimiter = " in ";
+            }
+
+            if (index > -1) {
+                preference = userInput.substring(0, index).trim();
+                location = userInput.substring(index + delimiter.length()).trim();
+                System.out.println("Extracted - Preference: '" + preference + "', Location: '" + location + "'");
+            }
+        }
+
+        // Construct request body with properly escaped JSON
         String json = "{" +
-                "\"userPreference\":\"" + userInput + "\"," +
-                "\"location\":\"\"," +
+                "\"userPreference\":\"" + escapeJson(userInput) + "\"," +
+                "\"location\":\"" + escapeJson(location) + "\"," +
                 "\"cuisine\":\"\"," +
                 "\"priceRange\":\"\"," +
                 "\"numberOfPeople\":1," +
-                "\"occasion\":\"\"}";
+                "\"occasion\":\"\"" +
+                "}";
+
+        System.out.println("Sending JSON: " + json);
+
         URL url = new URL("http://localhost:8080/api/recommendations");
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("POST");
         conn.setRequestProperty("Content-Type", "application/json");
         conn.setDoOutput(true);
+        conn.setConnectTimeout(30000); // 30 second timeout
+        conn.setReadTimeout(30000);
+
         try (OutputStream os = conn.getOutputStream()) {
-            os.write(json.getBytes());
+            os.write(json.getBytes("UTF-8"));
+            os.flush();
         }
+
+        int responseCode = conn.getResponseCode();
+        if (responseCode != 200) {
+            throw new Exception("Server returned code: " + responseCode);
+        }
+
         StringBuilder response = new StringBuilder();
-        try (BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream()))) {
+        try (BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream(), "UTF-8"))) {
             String line;
             while ((line = br.readLine()) != null) {
                 response.append(line);
             }
         }
-        // 提取aiExplanation字段内容
+
+        // Extract aiExplanation field content
         String resp = response.toString();
+        System.out.println("Received response: " + resp);
+
         int idx = resp.indexOf("\"aiExplanation\"");
         if (idx != -1) {
             int start = resp.indexOf(":", idx) + 1;
@@ -97,21 +175,42 @@ public class RestaurantChatUI extends JFrame {
             if (end == -1) end = resp.indexOf("}", start);
             if (start > 0 && end > start) {
                 String value = resp.substring(start, end).trim();
-                // 去除前后的引号
+                // Remove surrounding quotes
                 if (value.startsWith("\"") && value.endsWith("\"")) {
                     value = value.substring(1, value.length() - 1);
                 }
-                value = value.replaceAll("\\\\n", "\n").replaceAll("\\\\\"", "\"");
+                // Unescape JSON
+                value = value.replace("\\n", "\n")
+                        .replace("\\\"", "\"")
+                        .replace("\\\\", "\\")
+                        .replace("\\/", "/")
+                        .replace("\\b", "\b")
+                        .replace("\\f", "\f")
+                        .replace("\\r", "\r")
+                        .replace("\\t", "\t");
                 return value;
             }
         }
-        // 如果无法提取，返回完整响应内容，便于调试
-        return resp;
+
+        // If we can't extract aiExplanation, return the full response for debugging
+        return "Could not parse response. Raw data: " + resp;
+    }
+
+    private String escapeJson(String str) {
+        if (str == null) return "";
+        return str.replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\b", "\\b")
+                .replace("\f", "\\f")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
     }
 
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> {
-            new RestaurantChatUI().setVisible(true);
+            RestaurantChatUI ui = new RestaurantChatUI();
+            ui.setVisible(true);
         });
     }
-} 
+}
