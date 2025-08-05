@@ -1,43 +1,6 @@
-# Compiled class files
 *.class
 target/
 build/
-out/
-
-# IDE files
 .idea/
 *.iml
-.vscode/
-.settings/
-.project
-.classpath
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# Package files
-*.jar
-*.war
-*.ear
-
-# Sensitive information
 application.properties
-*.properties
-!application.properties.example
-
-# Log files
-*.log
-
-# Maven
-pom.xml.tag
-pom.xml.releaseBackup
-pom.xml.versionsBackup
-pom.xml.next
-release.properties
-
-# Gradle
-.gradle/
-gradle-app.setting
-!gradle-wrapper.jar
-.gradletasknamecache
