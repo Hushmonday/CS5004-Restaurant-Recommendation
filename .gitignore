@@ -4,3 +4,4 @@ build/
 .idea/
 *.iml
 application.properties
+.DS_Store
