@@ -2,8 +2,8 @@ package com.restaurant.recommendation.controller;
 
 import com.restaurant.recommendation.model.RecommendationRequest;
 import com.restaurant.recommendation.model.RecommendationResponse;
-import com.restaurant.recommendation.service.RestaurantService;
-import com.restaurant.recommendation.service.OpenAIService;
+import com.restaurant.recommendation.service.IRecommendationService;
+import com.restaurant.recommendation.service.IAIService;
 import com.restaurant.recommendation.core.RestaurantRecommendationServer;
 import com.sun.net.httpserver.HttpExchange;
 
@@ -12,12 +12,13 @@ import java.io.InputStream;
 import java.util.Scanner;
 
 public class RecommendationController {
-    private final RestaurantService restaurantService;
-    private final OpenAIService openAIService;
+    private final IRecommendationService restaurantService;
+    private final IAIService aiService;
 
-    public RecommendationController(RestaurantService restaurantService, OpenAIService openAIService) {
+    public RecommendationController(IRecommendationService restaurantService, IAIService aiService) {
         this.restaurantService = restaurantService;
-        this.openAIService = openAIService;
+        this.aiService = aiService;
+        System.out.println("RecommendationController initialized");
     }
 
     public void handleGetRecommendations(HttpExchange exchange) throws IOException {
@@ -55,17 +56,58 @@ public class RecommendationController {
         }
     }
 
+    public void handleHealth(HttpExchange exchange) throws IOException {
+        String response = "Restaurant Recommendation Service is running!";
+        RestaurantRecommendationServer.sendResponse(exchange, 200, response);
+    }
+
+    public void handleTestOpenAI(HttpExchange exchange) throws IOException {
+        try {
+            // Create a simple test request
+            RecommendationRequest testRequest = new RecommendationRequest();
+            testRequest.setUserPreference("Likes Chinese cuisine");
+            testRequest.setLocation("Beijing");
+            testRequest.setCuisine("Sichuan");
+            testRequest.setPriceRange("Medium");
+            testRequest.setNumberOfPeople(2);
+            testRequest.setOccasion("Friends gathering");
+
+            String result = aiService.getRecommendation(testRequest);
+            String response = "OpenAI API test successful!\n\nRecommendation result:\n" + result;
+            RestaurantRecommendationServer.sendResponse(exchange, 200, response);
+        } catch (Exception e) {
+            String response = "OpenAI API test failed:\n" + e.getMessage();
+            RestaurantRecommendationServer.sendResponse(exchange, 500, response);
+        }
+    }
+
+    public void handleReset(HttpExchange exchange) throws IOException {
+        try {
+            // Reset conversation history in OpenAI service
+            aiService.resetConversation();
+
+            String response = "Conversation history has been reset, location information cleared.";
+            RestaurantRecommendationServer.sendResponse(exchange, 200, response);
+
+            System.out.println("Conversation reset successful");
+        } catch (Exception e) {
+            System.err.println("Error resetting conversation: " + e.getMessage());
+            e.printStackTrace();
+            RestaurantRecommendationServer.sendResponse(exchange, 500,
+                "Reset failed: " + e.getMessage());
+        }
+    }
+
+    // 保持原有的JSON解析方法
     private RecommendationRequest parseRecommendationRequest(String jsonString) {
         RecommendationRequest request = new RecommendationRequest();
 
-        // Handle empty or null JSON
         if (jsonString == null || jsonString.trim().isEmpty()) {
             System.err.println("Warning: Empty JSON received");
             return request;
         }
 
         try {
-            // Remove curly braces and whitespace
             jsonString = jsonString.trim();
             if (jsonString.startsWith("{")) {
                 jsonString = jsonString.substring(1);
@@ -74,24 +116,20 @@ public class RecommendationController {
                 jsonString = jsonString.substring(0, jsonString.length() - 1);
             }
 
-            // Split by comma, but be careful about commas inside quoted strings
             String[] pairs = splitJsonPairs(jsonString);
 
             for (String pair : pairs) {
                 pair = pair.trim();
                 if (pair.isEmpty()) continue;
 
-                // Find the key and value
                 int colonIndex = pair.indexOf(":");
                 if (colonIndex == -1) continue;
 
                 String key = pair.substring(0, colonIndex).trim();
                 String value = pair.substring(colonIndex + 1).trim();
 
-                // Remove quotes from key
                 key = removeQuotes(key);
 
-                // Set the appropriate field based on key
                 switch (key) {
                     case "userPreference":
                         request.setUserPreference(removeQuotes(value));
@@ -126,7 +164,6 @@ public class RecommendationController {
     }
 
     private String[] splitJsonPairs(String jsonString) {
-        // Simple split that handles quoted strings containing commas
         java.util.List<String> pairs = new java.util.ArrayList<>();
         StringBuilder currentPair = new StringBuilder();
         boolean inQuotes = false;
@@ -164,43 +201,9 @@ public class RecommendationController {
 
         str = str.trim();
         if ((str.startsWith("\"") && str.endsWith("\"")) ||
-                (str.startsWith("'") && str.endsWith("'"))) {
+            (str.startsWith("'") && str.endsWith("'"))) {
             return str.substring(1, str.length() - 1);
         }
         return str;
-    }
-
-    private String extractValue(String line) {
-        int start = line.indexOf("\"", line.indexOf("\"") + 1) + 1;
-        int end = line.indexOf("\"", start);
-        if (start > 0 && end > start) {
-            return line.substring(start, end);
-        }
-        return "";
-    }
-
-    public void handleHealth(HttpExchange exchange) throws IOException {
-        String response = "Restaurant Recommendation Service is running!";
-        RestaurantRecommendationServer.sendResponse(exchange, 200, response);
-    }
-
-    public void handleTestOpenAI(HttpExchange exchange) throws IOException {
-        try {
-            // Create a simple test request
-            RecommendationRequest testRequest = new RecommendationRequest();
-            testRequest.setUserPreference("Likes Chinese cuisine");
-            testRequest.setLocation("Beijing");
-            testRequest.setCuisine("Sichuan");
-            testRequest.setPriceRange("Medium");
-            testRequest.setNumberOfPeople(2);
-            testRequest.setOccasion("Friends gathering");
-
-            String result = openAIService.getRecommendation(testRequest);
-            String response = "OpenAI API test successful!\n\nRecommendation result:\n" + result;
-            RestaurantRecommendationServer.sendResponse(exchange, 200, response);
-        } catch (Exception e) {
-            String response = "OpenAI API test failed:\n" + e.getMessage();
-            RestaurantRecommendationServer.sendResponse(exchange, 500, response);
-        }
     }
 }

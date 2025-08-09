@@ -12,15 +12,173 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 
-public class OpenAIService {
+public class OpenAIService extends BaseService implements IAIService {
     private String azureApiKey;
     private String azureEndpoint;
     private String azureDeployment;
     private OpenAIClient client;
 
+    // Add conversation history storage
+    private List<ChatRequestMessage> conversationHistory = new ArrayList<>();
+    private String currentUserLocation = null; // Store user location
+
     public OpenAIService() {
         loadProperties();
         initializeClient();
+        initializeConversation();
+        logInfo("OpenAI Service initialized");
+    }
+
+    @Override
+    public String getRecommendation(RecommendationRequest request) {
+        logInfo("Getting AI recommendation");
+
+        try {
+            if (client == null) {
+                return "Error: Azure OpenAI client not initialized. Please check API key and endpoint.";
+            }
+
+            String userInput = request.getUserPreference();
+            extractAndSaveLocation(userInput);
+
+            if (request.getLocation() != null && !request.getLocation().trim().isEmpty()) {
+                currentUserLocation = request.getLocation();
+            }
+
+            String contextualMessage = createContextualPrompt(request);
+            conversationHistory.add(new ChatRequestUserMessage(contextualMessage));
+
+            logDebug("Current saved location: " + currentUserLocation);
+            logDebug("User input: " + userInput);
+            logDebug("Conversation history length: " + conversationHistory.size());
+
+            ChatCompletionsOptions options = new ChatCompletionsOptions(conversationHistory);
+            options.setTemperature(0.7);
+            options.setTopP(0.9);
+            options.setMaxTokens(500);
+
+            ChatCompletions chatCompletions = client.getChatCompletions(azureDeployment, options);
+            if (chatCompletions.getChoices() != null && !chatCompletions.getChoices().isEmpty()) {
+                String response = chatCompletions.getChoices().get(0).getMessage().getContent();
+
+                conversationHistory.add(new ChatRequestAssistantMessage(response));
+
+                // Limit conversation history length to avoid token limit
+                if (conversationHistory.size() > 20) {
+                    List<ChatRequestMessage> trimmedHistory = new ArrayList<>();
+                    trimmedHistory.add(conversationHistory.get(0)); // System message
+                    trimmedHistory.addAll(conversationHistory.subList(conversationHistory.size() - 15, conversationHistory.size()));
+                    conversationHistory = trimmedHistory;
+                }
+
+                logInfo("AI response received successfully");
+                return response;
+            }
+            return "No AI recommendation received.";
+        } catch (Exception e) {
+            logError("Error getting AI recommendation", e);
+            return "AI error: " + e.getMessage();
+        }
+    }
+
+    @Override
+    public void resetConversation() {
+        conversationHistory.clear();
+        currentUserLocation = null;
+        initializeConversation();
+        logInfo("Conversation history has been reset");
+    }
+
+    @Override
+    public String getCurrentLocation() {
+        return currentUserLocation;
+    }
+
+    @Override
+    public boolean isAvailable() {
+        return client != null && azureApiKey != null && azureEndpoint != null;
+    }
+
+    @Override
+    public boolean isServiceHealthy() {
+        return isAvailable();
+    }
+
+    @Override
+    public String getServiceName() {
+        return "Azure OpenAI Service";
+    }
+
+    // Initialize conversation with system message
+    private void initializeConversation() {
+        String systemMessage = "You are a friendly and helpful AI assistant who can help with restaurant recommendations and general conversation. " +
+            "When helping with restaurants:\n" +
+            "- Remember location information the user provides (don't ask repeatedly)\n" +
+            "- Only recommend restaurants in their specified location\n" +
+            "- Match their taste preferences and dietary needs\n" +
+            "- Provide helpful details about restaurants\n" +
+            "\nConversation style:\n" +
+            "- Be conversational and natural\n" +
+            "- Answer follow-up questions about restaurants or other topics\n" +
+            "- If they ask non-restaurant questions, feel free to help with those too\n" +
+            "- Ask clarifying questions when helpful\n" +
+            "- Be concise but informative\n" +
+            "\nRemember: You're having a conversation with a person, not just generating restaurant lists!";
+
+        conversationHistory.add(new ChatRequestSystemMessage(systemMessage));
+    }
+
+    private void extractAndSaveLocation(String userInput) {
+        if (userInput == null) return;
+
+        String lowerInput = userInput.toLowerCase();
+
+        boolean isFoodRelated = lowerInput.contains("food") || lowerInput.contains("restaurant") ||
+            lowerInput.contains("eat") || lowerInput.contains("dining") ||
+            lowerInput.contains("spicy") || lowerInput.contains("cuisine");
+
+        if (!isFoodRelated) return;
+
+        if (lowerInput.contains("san jose")) {
+            currentUserLocation = "San Jose, CA";
+            logDebug("Detected user location: " + currentUserLocation);
+        } else if (lowerInput.contains(" in ") || lowerInput.contains(" at ")) {
+            int inIndex = lowerInput.indexOf(" in ");
+            int atIndex = lowerInput.indexOf(" at ");
+            int index = -1;
+
+            if (inIndex > 0 && (atIndex == -1 || inIndex < atIndex)) {
+                index = inIndex + 4;
+            } else if (atIndex > 0) {
+                index = atIndex + 4;
+            }
+
+            if (index > 0) {
+                String extractedLocation = userInput.substring(index).trim();
+                if (extractedLocation.length() > 2 && !extractedLocation.contains("?")) {
+                    currentUserLocation = extractedLocation;
+                    logDebug("Extracted user location: " + currentUserLocation);
+                }
+            }
+        }
+    }
+
+    private String createContextualPrompt(RecommendationRequest request) {
+        StringBuilder prompt = new StringBuilder();
+
+        String userInput = request.getUserPreference();
+        if (userInput != null && !userInput.trim().isEmpty()) {
+            prompt.append(userInput);
+
+            String lowerInput = userInput.toLowerCase();
+            if (currentUserLocation != null && !currentUserLocation.trim().isEmpty() &&
+                (lowerInput.contains("restaurant") || lowerInput.contains("food") ||
+                    lowerInput.contains("eat") || lowerInput.contains("recommend"))) {
+                prompt.append("\n\n[Context: User location is ").append(currentUserLocation).append("]");
+            }
+        }
+
+        return prompt.toString();
     }
 
     private void loadProperties() {
@@ -32,148 +190,24 @@ public class OpenAIService {
                 azureEndpoint = props.getProperty("azure.openai.endpoint");
                 azureDeployment = props.getProperty("azure.openai.deployment");
 
-                // Add debug output
-                System.out.println("=== Configuration Loading Check ===");
-                System.out.println("Config file found: Yes");
-                System.out.println("API Key loaded: " + (azureApiKey != null ? "Success (***" + azureApiKey.substring(azureApiKey.length() - 4) + ")" : "Failed"));
-                System.out.println("Endpoint: " + azureEndpoint);
-                System.out.println("Deployment: " + azureDeployment);
-                System.out.println("==================================");
+                logInfo("Configuration loaded successfully");
+                logDebug("API Key loaded: " + (azureApiKey != null ? "Success (***" + azureApiKey.substring(azureApiKey.length() - 4) + ")" : "Failed"));
+                logDebug("Endpoint: " + azureEndpoint);
+                logDebug("Deployment: " + azureDeployment);
             } else {
-                System.err.println("Error: application.properties file not found!");
-                System.err.println("Please ensure the file is in src/main/resources/ directory");
+                logError("application.properties file not found!", null);
             }
         } catch (IOException e) {
-            System.err.println("Error loading configuration file: " + e.getMessage());
-            e.printStackTrace();
+            logError("Error loading configuration file", e);
         }
     }
 
     private void initializeClient() {
         if (azureApiKey != null && azureEndpoint != null) {
             client = new OpenAIClientBuilder()
-                    .credential(new AzureKeyCredential(azureApiKey))
-                    .endpoint(azureEndpoint)
-                    .buildClient();
+                .credential(new AzureKeyCredential(azureApiKey))
+                .endpoint(azureEndpoint)
+                .buildClient();
         }
-    }
-
-    public String getRecommendation(RecommendationRequest request) {
-        try {
-            if (client == null) {
-                return "Error: Azure OpenAI client not initialized. Check your API key and endpoint.";
-            }
-
-            List<ChatRequestMessage> chatMessages = new ArrayList<>();
-
-            // More specific system message for restaurant recommendations
-            String systemMessage = "You are a restaurant recommendation assistant specializing in local restaurants. " +
-                    "IMPORTANT RULES:\n" +
-                    "1. ALWAYS recommend restaurants that are actually in the location specified by the user\n" +
-                    "2. If a user mentions a specific city (like San Jose), ONLY recommend restaurants in that city\n" +
-                    "3. Focus on matching the user's food preferences (like 'spicy food')\n" +
-                    "4. Provide exactly 3 restaurant recommendations\n" +
-                    "5. Use real restaurant names and accurate information\n" +
-                    "6. Format each recommendation exactly as: Name | Cuisine Type | City/Location | Rating (1-5) | Price ($-$$$$) | Description\n" +
-                    "7. Never recommend restaurants from other cities unless explicitly asked\n" +
-                    "8. For 'spicy food' requests, focus on cuisines known for spicy dishes (Thai, Indian, Sichuan, Mexican, Korean, etc.)\n" +
-                    "Always respond in English.";
-
-            chatMessages.add(new ChatRequestSystemMessage(systemMessage));
-
-            // Create a more specific prompt based on the request
-            String userMessage = createLocationAwarePrompt(request);
-            chatMessages.add(new ChatRequestUserMessage(userMessage));
-
-            // Log what we're sending (for debugging)
-            System.out.println("=== AI Request Debug ===");
-            System.out.println("User Input: " + request.getUserPreference());
-            System.out.println("Location: " + request.getLocation());
-            System.out.println("Sending to AI: " + userMessage);
-            System.out.println("======================");
-
-            ChatCompletionsOptions options = new ChatCompletionsOptions(chatMessages);
-            options.setTemperature(0.7); // Lower temperature for more consistent location-based results
-            options.setTopP(0.9);
-            options.setMaxTokens(500);
-
-            ChatCompletions chatCompletions = client.getChatCompletions(azureDeployment, options);
-            if (chatCompletions.getChoices() != null && !chatCompletions.getChoices().isEmpty()) {
-                String response = chatCompletions.getChoices().get(0).getMessage().getContent();
-                System.out.println("=== AI Response ===");
-                System.out.println(response);
-                System.out.println("==================");
-                return response;
-            }
-            return "No AI recommendation received.";
-        } catch (Exception e) {
-            System.err.println("=== AI Error ===");
-            e.printStackTrace();
-            return "AI error: " + e.getMessage();
-        }
-    }
-
-    private String createLocationAwarePrompt(RecommendationRequest r) {
-        String userInput = r.getUserPreference();
-        String location = r.getLocation();
-
-        // Extract location from user input if not explicitly set
-        if ((location == null || location.trim().isEmpty()) && userInput != null) {
-            // Check if user input contains location information
-            String lowerInput = userInput.toLowerCase();
-            if (lowerInput.contains("san jose")) {
-                location = "San Jose, CA";
-            } else if (lowerInput.contains("at ") || lowerInput.contains("in ")) {
-                // Try to extract location after "at" or "in"
-                int atIndex = lowerInput.indexOf(" at ");
-                int inIndex = lowerInput.indexOf(" in ");
-                int index = Math.max(atIndex, inIndex);
-                if (index > 0) {
-                    location = userInput.substring(index + 4).trim();
-                }
-            }
-        }
-
-        // Build a clear, specific prompt
-        StringBuilder prompt = new StringBuilder();
-        prompt.append("User request: ");
-
-        if (userInput != null && !userInput.trim().isEmpty()) {
-            prompt.append("\"").append(userInput).append("\"\n\n");
-
-            // Parse specific requirements from the input
-            String lowerInput = userInput.toLowerCase();
-            if (lowerInput.contains("spicy")) {
-                prompt.append("The user specifically wants SPICY food. Focus on restaurants known for spicy dishes.\n");
-                prompt.append("Good options include: Thai, Indian (especially South Indian), Sichuan Chinese, Korean, Mexican restaurants.\n");
-            }
-        }
-
-        if (location != null && !location.trim().isEmpty()) {
-            prompt.append("LOCATION REQUIREMENT: You MUST only recommend restaurants in ").append(location).append(".\n");
-            prompt.append("Do NOT recommend restaurants from any other city.\n\n");
-        }
-
-        prompt.append("Please recommend exactly 3 restaurants that match these requirements.\n");
-        prompt.append("Format each restaurant as:\n");
-        prompt.append("1. Restaurant Name | Cuisine Type | City/Location | Rating (1-5) | Price ($-$$$$) | Why it matches the request\n");
-        prompt.append("2. (same format)\n");
-        prompt.append("3. (same format)\n\n");
-        prompt.append("Make sure all restaurants are real establishments in the specified location.");
-
-        return prompt.toString();
-    }
-
-    private String createFlexiblePrompt(RecommendationRequest r) {
-        // Use the new location-aware prompt instead
-        return createLocationAwarePrompt(r);
-    }
-
-    private String buildPrompt(RecommendationRequest r) {
-        return createLocationAwarePrompt(r);
-    }
-
-    private String safe(String s) {
-        return (s != null && !s.isEmpty()) ? s : "Not specified";
     }
 }

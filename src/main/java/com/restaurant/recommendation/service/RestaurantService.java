@@ -7,35 +7,67 @@ import com.restaurant.recommendation.model.RecommendationResponse;
 import java.util.ArrayList;
 import java.util.List;
 
-public class RestaurantService {
+public class RestaurantService extends BaseService implements IRecommendationService {
 
-    private final OpenAIService openAIService;
+    private final IAIService aiService;
 
-    public RestaurantService(OpenAIService openAIService) {
-        this.openAIService = openAIService;
+    public RestaurantService(IAIService aiService) {
+        this.aiService = aiService;
+        logInfo("RestaurantService initialized");
     }
 
+    @Override
     public RecommendationResponse getRecommendations(RecommendationRequest request) {
+        logInfo("Processing recommendation request");
         RecommendationResponse response = new RecommendationResponse();
 
-        String aiOutput = openAIService.getRecommendation(request);
+        try {
+            if (!aiService.isAvailable()) {
+                throw new RuntimeException("AI Service is not available");
+            }
 
-        // Strip any filler text before the first numbered line
-        aiOutput = aiOutput.replaceAll("(?s)^.*?(?=1\\.)", "").trim();
+            String aiOutput = aiService.getRecommendation(request);
 
-        response.setAiExplanation(aiOutput);
+            // Strip any filler text before the first numbered line
+            aiOutput = aiOutput.replaceAll("(?s)^.*?(?=1\\.)", "").trim();
+            response.setAiExplanation(aiOutput);
 
-        List<Restaurant> restaurants = parseRestaurants(aiOutput);
+            List<Restaurant> restaurants = parseRestaurants(aiOutput);
 
-        if (restaurants.isEmpty()) {
-            restaurants = getMockRestaurants(request);
-            response.setReasoning("AI output could not be parsed. Returning fallback restaurants.");
-        } else {
-            response.setReasoning("AI successfully generated recommendations based on your preferences.");
+            if (restaurants.isEmpty()) {
+                logInfo("AI parsing failed, using fallback restaurants");
+                restaurants = getMockRestaurants(request);
+                response.setReasoning("AI output could not be parsed. Returning fallback restaurants.");
+            } else {
+                logInfo("Successfully parsed " + restaurants.size() + " restaurants");
+                response.setReasoning("AI successfully generated recommendations based on your preferences.");
+            }
+
+            response.setRecommendations(restaurants);
+            return response;
+
+        } catch (Exception e) {
+            logError("Error in getRecommendations", e);
+            response.setRecommendations(getMockRestaurants(request));
+            response.setReasoning("Service error occurred. Returning fallback restaurants.");
+            return response;
         }
+    }
 
-        response.setRecommendations(restaurants);
-        return response;
+    @Override
+    public void resetService() {
+        logInfo("Resetting restaurant service");
+        aiService.resetConversation();
+    }
+
+    @Override
+    public boolean isServiceHealthy() {
+        return aiService != null && aiService.isAvailable();
+    }
+
+    @Override
+    public String getServiceName() {
+        return "Restaurant Recommendation Service";
     }
 
     private List<Restaurant> parseRestaurants(String aiOutput) {
