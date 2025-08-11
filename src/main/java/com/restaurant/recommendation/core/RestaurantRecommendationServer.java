@@ -17,7 +17,6 @@ import java.util.List;
 public class RestaurantRecommendationServer {
     private static final int PORT = 8080;
 
-    // 使用接口类型 - 简单的依赖注入
     private static final IAIService aiService = new OpenAIService();
     private static final IRecommendationService restaurantService = new RestaurantService(aiService);
     private static final RecommendationController recommendationController =
