@@ -17,7 +17,6 @@ public abstract class BaseService {
     System.out.println("[" + this.getClass().getSimpleName() + "] DEBUG: " + message);
   }
 
-  // 抽象方法，子类必须实现
   public abstract boolean isServiceHealthy();
   public abstract String getServiceName();
 }
