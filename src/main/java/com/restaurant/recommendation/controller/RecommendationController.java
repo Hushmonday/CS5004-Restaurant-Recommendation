@@ -98,7 +98,6 @@ public class RecommendationController {
         }
     }
 
-    // 保持原有的JSON解析方法
     private RecommendationRequest parseRecommendationRequest(String jsonString) {
         RecommendationRequest request = new RecommendationRequest();
 
